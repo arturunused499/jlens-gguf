@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# One-command launcher for the J-Lens visualizer.
+#
+#   scripts/jlens-up MODEL.gguf [LENS.gguf] [extra `serve` args...]
+#
+# Builds the native activation server if needed, creates/uses the project
+# venv, and starts the bridge (which autostarts the native server).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODEL="${1:?usage: jlens-up MODEL.gguf [LENS.gguf] [serve args...]}"
+shift
+LENS=""
+if [ $# -gt 0 ] && [[ "$1" != --* ]]; then
+    LENS="$1"; shift
+fi
+
+PY="$ROOT/.venv/bin/python"
+if [ ! -x "$PY" ]; then
+    echo "creating venv..."
+    python3 -m venv "$ROOT/.venv" 2>/dev/null || python3 -m venv --without-pip "$ROOT/.venv"
+    if [ ! -x "$ROOT/.venv/bin/pip" ]; then
+        curl -sL https://bootstrap.pypa.io/get-pip.py | "$PY"
+    fi
+    "$ROOT/.venv/bin/pip" -q install numpy requests
+    "$ROOT/.venv/bin/pip" -q install gguf || "$ROOT/.venv/bin/pip" -q install -e "$ROOT/llama.cpp/gguf-py"
+fi
+
+if [ ! -x "$ROOT/native/jlens-server" ]; then
+    echo "building native activation server..."
+    "$ROOT/native/build.sh"
+fi
+
+cd "$ROOT"
+exec "$PY" -m jlens_gguf serve --model "$MODEL" ${LENS:+--lens "$LENS"} "$@"

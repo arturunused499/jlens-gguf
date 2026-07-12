@@ -1,0 +1,22 @@
+jlens-gguf
+Copyright 2026
+
+Licensed under the Apache License, Version 2.0 (the "License"); see LICENSE.
+
+This product includes and/or derives from:
+
+- The Jacobian Lens method and its reference implementation, from
+  "Verbalizable Representations Form a Global Workspace in Language Models"
+  (Anthropic, https://transformer-circuits.pub/2026/workspace/index.html),
+  released under the Apache License 2.0. The web visualizer's heatmap, panel,
+  and rank-chart design is adapted from that reference visualization.
+
+Vendored third-party components (under native/vendor/, each under its own
+license, MIT):
+
+- cpp-httplib (Yuji Hirose) — https://github.com/yhirose/cpp-httplib
+- nlohmann/json (Niels Lohmann) — https://github.com/nlohmann/json
+- d3 v7 (Mike Bostock, ISC) — bundled at jlens_gguf/web/vendor/d3.min.js
+
+llama.cpp (MIT, https://github.com/ggml-org/llama.cpp) is referenced as a git
+submodule and linked at build time; it is not redistributed in this repository.

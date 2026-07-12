@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jlens-gguf"
+version = "0.1.0"
+description = "Jacobian Lens for GGUF models served by llama.cpp: live visualization, steering, and patching"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "requests>=2.28",
+    "gguf>=0.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+jlens-gguf = "jlens_gguf.cli:main"
+
+[tool.setuptools]
+packages = ["jlens_gguf"]
+
+[tool.setuptools.package-data]
+jlens_gguf = ["web/*", "web/vendor/*"]

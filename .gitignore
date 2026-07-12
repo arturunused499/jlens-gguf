@@ -1,0 +1,31 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# models & fitted lenses (large binaries — fit/download locally)
+models/
+lenses/*.gguf
+*.gguf
+
+# native build artifacts
+native/jlens-server
+native/poc_cb
+native/*.o
+
+# llama.cpp build output (the submodule itself is tracked as a gitlink)
+llama.cpp/build/
+
+# the upstream reference implementation (separate project; not part of this repo)
+jacobian-lens/
+
+# scratch
+.ui-shots/
+*.log
+
+# session-local harness config
+.claude/
