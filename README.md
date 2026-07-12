@@ -28,6 +28,9 @@ generation**.
                         └────────────────────────────────┘
 ```
 
+> **New here? Start with [QUICKSTART.md](QUICKSTART.md)** — a friendly,
+> task-oriented walkthrough. This README is the full reference.
+
 The reference PyTorch implementation reads the residual stream with hooks and
 computes with torch tensors. Here, **the lens lives in a GGUF file**, readout
 weights (final norm + unembedding) are **read directly from the model GGUF**
@@ -101,6 +104,31 @@ quantized GGUF through llama.cpp.
 Without `--lens` the visualizer runs with the **identity lens** (= the classic
 logit lens) — everything works, readouts are just less faithful at early
 layers.
+
+### Any GGUF, including Mixture-of-Experts
+
+Fitting and visualization work on **any GGUF llama.cpp can load** — dense or
+MoE (Qwen3-MoE, Mixtral, DeepSeek, OLMoE, …). The lens only ever touches the
+`d_model`-wide residual stream (`l_out-<il>`), which is identical whether the
+block's FFN is dense or a sparse expert mixture, so **MoE routing and expert
+count don't affect the lens at all**. Quantized weights are fine: readout
+weights are dequantized to fp32 and the numpy readout matches llama.cpp's own
+logits to corr > 0.9999 even at Q4 (verified on a 64-expert OLMoE and on Q8
+Qwen).
+
+**Scaling to large models.** The regression fit's memory is
+`n_layers × 2 × d_model² × itemsize` (two Gram matrices per fitted layer) and
+the lens file is `n_layers × d_model² × 2` bytes — both `O(n_layers·d_model²)`
+and **independent of expert count**. `fit` prints this footprint up front. For
+a ~200–400B MoE (e.g. Qwen3.5-397B-A17B): the *model itself* dominates memory,
+so run it on hardware sized to load it; the lens then adds ~25–50 GiB of fit
+RAM (use `--gram-dtype float32` to halve it) and a multi-GiB lens file. If that
+doesn't fit at once, fit a **band** of layers with `--layers a,b,c` over
+several passes and combine them with `JacobianLensGGUF.merge`. The main
+*interactive* cost is the readout grid (`positions × d_model × vocab` per
+layer) — use a layer **stride** or shorter prompts on very large models. Per-
+token forward cost is set by the *active* parameters (A17B ≪ 397B), so capture
+passes stay tractable, and GPU offload (`-ngl`) speeds them up.
 
 ### Converting a real (causal) Jacobian lens
 
@@ -356,7 +384,10 @@ against closed-form expectations, regression-fit quality vs the logit lens,
 every bridge endpoint including steering/swap/ablate rank effects, **backend
 mode** (OpenAI chat/completions, streaming, stop sequences, live-intervention
 effects, KV prefix reuse, forward/completion interplay), and a
-headless-Chromium drive of the full UI.
+headless-Chromium drive of the full UI. `tests/test_moe.py` adds a
+Mixture-of-Experts check (capture + readout + intervention + steered
+generation), auto-skipped unless a MoE GGUF is present
+(`JLENS_MOE_MODEL=/path/to/moe.gguf`).
 
 ## Caveats
 

@@ -218,6 +218,8 @@ def cmd_fit(args) -> None:
     layers = None
     if args.layers:
         layers = [int(x) for x in args.layers.split(",")]
+    import numpy as np
+
     lens = fit_regression(
         client,
         prompts,
@@ -227,6 +229,7 @@ def cmd_fit(args) -> None:
         ridge=args.ridge,
         affine=not args.no_affine,
         base_model=args.model or "",
+        gram_dtype=np.float32 if args.gram_dtype == "float32" else np.float64,
     )
     lens.save(args.output)
     print(f"saved {lens!r} -> {args.output}")
@@ -323,6 +326,8 @@ def main(argv=None) -> None:
     p.add_argument("--max-seq-len", type=int, default=128)
     p.add_argument("--ridge", type=float, default=1e-4)
     p.add_argument("--no-affine", action="store_true", help="fit without a bias term")
+    p.add_argument("--gram-dtype", choices=["float64", "float32"], default="float64",
+                   help="Gram accumulator precision; float32 halves fit RAM for large models")
     p.add_argument("-o", "--output", required=True)
     _add_native_args(p)
     p.set_defaults(fn=cmd_fit)

@@ -37,6 +37,46 @@ logger = logging.getLogger(__name__)
 SKIP_FIRST_N_POSITIONS = 16
 
 
+def _available_ram_bytes() -> int | None:
+    """MemAvailable from /proc/meminfo (Linux), else None."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return None
+
+
+def _log_fit_footprint(n_layers: int, d: int, max_seq_len: int, gram_dtype) -> None:
+    """Report (and warn about) the fit's memory / output footprint.
+
+    Peak fit RAM is dominated by two Gram matrices per fitted layer:
+    ``n_layers * 2 * d^2 * itemsize``. The lens file is
+    ``n_layers * d^2 * 2`` bytes (fp16). Both scale as ``O(n_layers * d^2)``
+    and are independent of MoE expert count (the lens only sees the
+    ``d_model``-wide residual stream).
+    """
+    itemsize = np.dtype(gram_dtype).itemsize
+    gram = n_layers * 2 * d * d * itemsize
+    lens = n_layers * d * d * 2
+    capture = max_seq_len * d * 4 * (n_layers + 1)
+    logger.info(
+        "fit footprint: %d layers x d=%d -> Gram %.1f GiB (%s), lens file ~%.1f GiB (fp16), "
+        "per-prompt capture ~%.0f MiB",
+        n_layers, d, gram / 2**30, np.dtype(gram_dtype).name, lens / 2**30, capture / 2**20,
+    )
+    avail = _available_ram_bytes()
+    if avail is not None and gram > 0.6 * avail:
+        logger.warning(
+            "estimated Gram memory %.1f GiB is a large fraction of available RAM %.1f GiB. "
+            "Fit a BAND of layers with --layers a,b,c,... in several passes and combine with "
+            "JacobianLensGGUF.merge, and/or pass gram_dtype=float32 to halve it.",
+            gram / 2**30, avail / 2**30,
+        )
+
+
 def fit_regression(
     client: NativeClient,
     prompts: Sequence[str],
@@ -49,6 +89,7 @@ def fit_regression(
     affine: bool = True,
     base_model: str = "",
     progress: bool = True,
+    gram_dtype=np.float64,
 ) -> JacobianLensGGUF:
     """Fit a regression lens over ``prompts`` via a running jlens-server.
 
@@ -57,12 +98,17 @@ def fit_regression(
         prompts: text corpus (~100 prompts of ~128 tokens is usable; more is
             better, quality saturates quickly).
         source_layers: layers to fit (default: every layer below target).
+            For very large models, fit a *band* of layers per pass and combine
+            passes with :meth:`JacobianLensGGUF.merge`, to bound peak memory.
         target_layer: transport target (default: final layer).
         skip_first: leading positions excluded from the average.
         max_seq_len: truncate each prompt to this many tokens.
         ridge: ridge strength, relative to ``trace(Sxx)/d``.
         affine: also fit a bias (recommended for regression lenses).
         base_model: informational tag stored in the lens file.
+        gram_dtype: accumulator dtype for the per-layer Gram matrices. Default
+            ``float64`` (safest). ``float32`` halves peak fit memory for large
+            ``d_model`` at a small precision cost — useful for big models.
     """
     props = client.props()
     n_layers, d = props["n_layer"], props["n_embd"]
@@ -72,8 +118,10 @@ def fit_regression(
     if any(l >= target for l in layers):
         raise ValueError(f"source layers must be < target layer {target}")
 
-    sxx = {l: np.zeros((d, d), dtype=np.float64) for l in layers}
-    sxy = {l: np.zeros((d, d), dtype=np.float64) for l in layers}
+    _log_fit_footprint(len(layers), d, max_seq_len, gram_dtype)
+
+    sxx = {l: np.zeros((d, d), dtype=gram_dtype) for l in layers}
+    sxy = {l: np.zeros((d, d), dtype=gram_dtype) for l in layers}
     sx = {l: np.zeros(d, dtype=np.float64) for l in layers}
     sy = np.zeros(d, dtype=np.float64)
     h_ss = {l: 0.0 for l in layers}  # for h_rms
