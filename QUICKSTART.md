@@ -165,7 +165,73 @@ client.chat.completions.create(model="m", messages=[
 
 ---
 
-## 7. Cheat sheet
+## 7. Observing a model you're already running (llama-server / llama-cli / talk-llama)
+
+**The one rule first:** you can't read the *live* activations of an
+already-running process. The residual-stream hook has to be registered when the
+model's context is created, and jlens-server can't reach into another program's
+memory after the fact. So there are exactly two moves:
+
+- **Inspect** — run jlens-server on the **same GGUF file** and explore any
+  prompt on the same weights (readouts are exact; you just re-run the prompt).
+- **Steer** — have the tool send its generations **through** jlens-server
+  (drop-in backend, §6). Only works for tools that talk to an OpenAI/llama-server
+  endpoint.
+
+Here's what that means for each:
+
+### llama-server  — fully supported (inspect *and* steer)
+
+```bash
+# INSPECT: point quickstart at the running server; it reads the model from /props
+python -m jlens_gguf quickstart --llama-server http://127.0.0.1:8080
+
+# STEER: swap llama-server for jlens-server (same flags) and point your app at it
+native/jlens-server -m your-model.gguf -c 8192 -ngl 99 --host 0.0.0.0 --port 8080
+#   → app base_url = http://<host>:8080/v1, then push interventions in the UI
+```
+
+### llama-cli  — inspect the same model (can't steer its own generation)
+
+`llama-cli` generates in-process with no HTTP endpoint, so there's nothing to
+auto-discover and no backend to redirect. Point jlens at the **same file** it's
+using:
+
+```bash
+# whatever GGUF you passed to `llama-cli -m …`, give the same path here:
+python -m jlens_gguf quickstart /path/to/the-same-model.gguf
+```
+
+You'll see the full layer×position readout for any prompt on the identical
+weights. To actually steer generation, use `llama-server`/`jlens-server` instead
+of `llama-cli`.
+
+### talk-llama  — inspect the same model; steer only via a server backend
+
+`talk-llama` is a **whisper.cpp** voice example that (in its standard form) runs
+llama in-process, like `llama-cli`. So the default path is the same — inspect
+the same GGUF:
+
+```bash
+python -m jlens_gguf quickstart /path/to/talk-llama-model.gguf
+```
+
+If you run a variant of talk-llama that reaches an OpenAI/`llama-server`
+endpoint for the LLM (some forks do), then point that endpoint at
+`jlens-server` and you can steer its spoken replies live — build interventions
+in the UI, **push**, and speak.
+
+### Quick reference
+
+| Tool | Auto-discover model | Inspect (same weights) | Steer live generation |
+|---|:--:|:--:|:--:|
+| `llama-server` | ✅ `--llama-server URL` | ✅ | ✅ point app at `jlens-server` |
+| `llama-cli` | ✗ (no HTTP) | ✅ same GGUF path | ✗ (in-process) |
+| `talk-llama` | ✗ (no HTTP) | ✅ same GGUF path | ⚠️ only if it uses a server backend |
+
+---
+
+## 8. Cheat sheet
 
 ```bash
 # visualize (autostarts the sidecar)
@@ -193,7 +259,7 @@ the `lens` checkbox toggles fitted‑lens vs raw logit‑lens.
 
 ---
 
-## 8. Does it work on *my* model?
+## 9. Does it work on *my* model?
 
 - **Any GGUF llama.cpp can load** — dense or **Mixture‑of‑Experts** (Qwen3‑MoE,
   Mixtral, DeepSeek, OLMoE, …). The lens only touches the `d_model`‑wide
@@ -212,7 +278,7 @@ the `lens` checkbox toggles fitted‑lens vs raw logit‑lens.
 
 ---
 
-## 9. If something's off
+## 10. If something's off
 
 - **`l_out_ok: false`** in `/props` → that architecture doesn't expose the
   residual tensors the lens needs (rare). Everything else refuses loudly rather
