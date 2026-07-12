@@ -89,12 +89,23 @@ def _ensure_native(args) -> str:
     if client.health():
         props = client.props()
         logger.info("using running jlens-server at %s (%s)", url, props.get("model_desc"))
-        if args.model and Path(props.get("model_path", "")).resolve() != Path(args.model).resolve():
-            logger.warning(
-                "native server model (%s) differs from --model (%s); "
-                "readout weights must match the served model!",
-                props.get("model_path"), args.model,
-            )
+        # The bridge reads readout weights (final norm + unembedding) from
+        # --model, while activations come from this native server. If they are
+        # different GGUFs the results are silently wrong, so refuse rather than
+        # warn. (When --model is omitted, cmd_serve backfills it from here.)
+        served = props.get("model_path", "")
+        if args.model and served:
+            try:
+                same = os.path.samefile(served, args.model)
+            except OSError:
+                same = Path(served).resolve() == Path(args.model).resolve()
+            if not same:
+                sys.exit(
+                    f"error: jlens-server at {url} is serving {served!r}, but --model "
+                    f"is {args.model!r}. The bridge's readout weights must come from the "
+                    "SAME GGUF the sidecar runs. Stop that server, pass a matching "
+                    "--model, or omit --model to use the served one."
+                )
         return url
 
     if not args.model:

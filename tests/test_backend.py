@@ -84,6 +84,17 @@ def test_stop_sequence(native_server):
     assert choice["finish_reason"] == "stop"
 
 
+def test_empty_stop_string_is_ignored(native_server):
+    """An empty stop string must not terminate every completion immediately."""
+    out = requests.post(f"{native_server}/v1/completions", json={
+        "prompt": "Once upon a time", "temperature": 0, "max_tokens": 8,
+        "stop": [""]}, timeout=120).json()
+    choice = out["choices"][0]
+    assert out["usage"]["completion_tokens"] == 8
+    assert choice["finish_reason"] == "length"
+    assert choice["text"]
+
+
 def test_live_interventions_affect_completions(native_server, client, rng):
     base = _chat(native_server)["choices"][0]["message"]["content"]
 

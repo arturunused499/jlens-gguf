@@ -63,6 +63,20 @@ def _b64(arr: np.ndarray) -> str:
     return base64.b64encode(np.ascontiguousarray(arr).tobytes()).decode()
 
 
+def safe_static_path(rel: str, root: Path = WEB_DIR) -> Path | None:
+    """Resolve ``rel`` under ``root`` and return it only if it stays inside.
+
+    Uses a path-boundary check (``root in target.parents``), not a string
+    prefix, so ``../web-backup/x`` can't escape to a sibling directory whose
+    name merely starts with the web dir's.
+    """
+    web_root = root.resolve()
+    target = (web_root / rel.lstrip("/")).resolve()
+    if target == web_root or web_root in target.parents:
+        return target
+    return None
+
+
 class LogitsCache:
     """LRU cache of per-(ctx, layer) lens logits, bounded by bytes."""
 
@@ -567,10 +581,10 @@ class Handler(BaseHTTPRequestHandler):
                 q = qs.get("q", [""])[0]
                 limit = int(qs.get("limit", ["50"])[0])
                 return self._send_json(self.app.api_search_tokens(q, limit))
-            # static files
+            # static files (path-boundary checked; see safe_static_path)
             rel = url.path.lstrip("/") or "index.html"
-            target = (WEB_DIR / rel).resolve()
-            if not str(target).startswith(str(WEB_DIR.resolve())):
+            target = safe_static_path(rel)
+            if target is None:
                 return self._send_json({"error": "forbidden"}, 403)
             return self._send_file(target)
         except ValueError as e:

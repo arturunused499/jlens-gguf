@@ -124,6 +124,32 @@ def test_generation_steered_differs(client, toks, rng):
     assert [g["token"] for g in fr0.generated] != [g["token"] for g in fr1.generated]
 
 
+def test_client_session_is_thread_local(client, toks):
+    """Each thread gets its own requests.Session (the bridge calls this client
+    concurrently from ThreadingHTTPServer workers)."""
+    import threading
+
+    sessions = {}
+    errors = []
+
+    def worker(i):
+        try:
+            sessions[i] = id(client._session)
+            for _ in range(5):
+                assert client.props()["l_out_ok"] is True
+                client.tokenize("hello world")
+        except Exception as e:  # pragma: no cover
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert len(set(sessions.values())) == len(threads)  # distinct session per thread
+
+
 def test_bad_requests(client, toks):
     with pytest.raises(RuntimeError, match="out of range"):
         client.forward([999999])

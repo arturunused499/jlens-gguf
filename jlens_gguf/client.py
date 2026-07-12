@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import json
 import struct
+import threading
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -49,9 +50,19 @@ class NativeClient:
     def __init__(self, base_url: str = "http://127.0.0.1:8091", timeout: float = 600.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self._session = requests.Session()
+        # requests.Session is not thread-safe; the bridge's ThreadingHTTPServer
+        # calls this client from many threads (a live-poll GET can overlap a
+        # slice POST). Give each thread its own Session.
+        self._local = threading.local()
         self._vocab: list[str] | None = None
         self._vocab_attrs: list[int] | None = None
+
+    @property
+    def _session(self) -> requests.Session:
+        s = getattr(self._local, "session", None)
+        if s is None:
+            s = self._local.session = requests.Session()
+        return s
 
     # ------------------------------------------------------------------ #
 

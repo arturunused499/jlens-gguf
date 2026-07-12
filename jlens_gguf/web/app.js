@@ -153,7 +153,12 @@ async function runSlice(extra = {}) {
   }
 }
 
-function tokensKey(tokens) { return tokens.join(','); }
+// Baseline identity = prompt tokens + which layers (encodes stride) + lens
+// mode. A stride or lens change yields a different key, so the diff baseline is
+// refetched instead of being silently compared against a mismatched grid.
+function baselineKey(tokens, nPrompt, layers, useLens) {
+  return tokens.slice(0, nPrompt).join(',') + '|' + (useLens ? 1 : 0) + '|' + layers.join('-');
+}
 
 function ingestSlice(res) {
   const firstRun = !D;
@@ -178,12 +183,14 @@ function ingestSlice(res) {
   rankFetching = new Set();
   // record this run as baseline if it had no interventions
   if (!D.hadInterventions) {
-    baselineByKey.set(tokensKey(D.tokens.slice(0, D.nPrompt)), snapshotArgmax());
+    baselineByKey.set(baselineKey(D.tokens, D.nPrompt, D.layers, D.useLens), snapshotArgmax());
     if (baselineByKey.size > 6) baselineByKey.delete(baselineByKey.keys().next().value);
   }
   if (firstRun) buildLayout();
   else rebuildForNewData();
-  selCtx = Math.min(selCtx || D.T - 1, D.T - 1);
+  // keep the current selection if it's still a valid position (note: 0 is
+  // valid — don't fall through `||`); otherwise default to the last position
+  selCtx = Number.isFinite(selCtx) ? Math.min(Math.max(selCtx, 0), D.T - 1) : D.T - 1;
   if (!D.layerIndex.has(selLayer)) selLayer = D.layers[Math.floor(D.L / 2)];
   if (firstRun) { selCtx = D.T - 1; }
   for (const tid of pinned.keys()) ensureRank(tid);
@@ -193,20 +200,23 @@ function ingestSlice(res) {
 }
 
 function snapshotArgmax() {
-  const out = new Int32Array(D.T * D.L);
-  for (let t = 0; t < D.T; t++) for (let l = 0; l < D.L; l++) out[t * D.L + l] = argmaxAt(t, l);
-  return { argmax: out, T: D.T, L: D.L };
+  // prompt positions only — generated tokens differ run-to-run and aren't
+  // comparable, so they must not seed a diff baseline
+  const nP = Math.min(D.nPrompt, D.T);
+  const out = new Int32Array(nP * D.L);
+  for (let t = 0; t < nP; t++) for (let l = 0; l < D.L; l++) out[t * D.L + l] = argmaxAt(t, l);
+  return { argmax: out, T: nP, L: D.L };
 }
 
 function currentBaseline() {
   if (!D || !D.hadInterventions) return null;
-  const base = baselineByKey.get(tokensKey(D.tokens.slice(0, D.nPrompt)));
+  const base = baselineByKey.get(baselineKey(D.tokens, D.nPrompt, D.layers, D.useLens));
   return (base && base.L === D.L) ? base : null;
 }
 
 async function maybeFetchBaseline(res) {
   if (!(res.interventions || []).length) return;
-  const key = tokensKey(res.tokens.slice(0, res.n_prompt));
+  const key = baselineKey(res.tokens, res.n_prompt, res.layers, res.use_lens);
   if (baselineByKey.has(key) || baselinePending === key) return;
   baselinePending = key;
   try {
@@ -215,6 +225,9 @@ async function maybeFetchBaseline(res) {
       use_lens: res.use_lens, top_n: res.top_n, interventions: [],
       stride: +$('stride').value || 1,
     });
+    // only store if the baseline's grid matches the steered run's layers;
+    // otherwise the stride control moved mid-fetch and this is stale
+    if (base.layers.join('-') !== res.layers.join('-')) return;
     const bIds = b64ToI32(base.top_ids);
     const T = base.tokens.length, L = base.layers.length, K = base.top_n;
     const argmax = new Int32Array(T * L);

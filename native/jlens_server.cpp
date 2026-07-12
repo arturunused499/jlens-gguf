@@ -48,6 +48,7 @@
 #include "cpp-httplib/httplib.h"
 #include "nlohmann/json.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cinttypes>
 #include <cmath>
@@ -162,6 +163,9 @@ struct stop_scanner {
     bool hit = false;
 
     explicit stop_scanner(std::vector<std::string> s) : stops(std::move(s)) {
+        // drop empty stop strings: "" matches everywhere and would terminate
+        // every completion immediately (and leaves max_len == 0)
+        stops.erase(std::remove(stops.begin(), stops.end(), std::string()), stops.end());
         for (const auto & x : stops) max_len = std::max(max_len, x.size());
     }
 
@@ -543,12 +547,16 @@ static void handle_forward(jlens_server & S, const httplib::Request & req, httpl
             ivs = parse_interventions(S, body["interventions"]);
         }
 
-        // logits rows requested
-        std::set<int64_t> want_logits;
+        // logits rows requested. Negative indices are resolved against the
+        // ACTUAL generated length after decoding (not n_prompt + n_predict),
+        // so e.g. -1 is the true final position even when generation stops
+        // early on EOG.
+        std::set<int64_t>    want_logits;      // non-negative absolute positions
+        std::vector<int64_t> want_logits_neg;  // negative offsets, resolved later
         if (body.contains("logits_positions")) {
             for (int64_t p : body["logits_positions"].get<std::vector<int64_t>>()) {
-                if (p < 0) p += (int64_t) tokens.size() + n_predict;
-                want_logits.insert(p);
+                if (p < 0) want_logits_neg.push_back(p);
+                else       want_logits.insert(p);
             }
         }
 
@@ -561,7 +569,8 @@ static void handle_forward(jlens_server & S, const httplib::Request & req, httpl
         const uint32_t seed = (uint32_t) sampling.value("seed", -1);
 
         // last-layer capture (and any logits request) needs all-position logits
-        const bool all_logits = capture.count(S.n_layer - 1) > 0 || !want_logits.empty();
+        const bool all_logits = capture.count(S.n_layer - 1) > 0 ||
+                                !want_logits.empty() || !want_logits_neg.empty();
 
         // ------------- run (serialized) -------------
         std::lock_guard<std::mutex> lock(S.mutex);
@@ -635,6 +644,23 @@ static void handle_forward(jlens_server & S, const httplib::Request & req, httpl
         }
         if (smpl) llama_sampler_free(smpl);
         const auto t_gen1 = ggml_time_us();
+
+        // resolve negative logits_positions against the actual length. The
+        // logits of the final decoded position are still live: index 0 when a
+        // token was just generated, else the last prompt token's row.
+        if (!want_logits_neg.empty()) {
+            const int64_t total = n_prompt + n_gen;
+            const int32_t final_idx =
+                (n_gen > 0) ? 0 : (all_logits ? (int32_t) ((n_prompt - 1) % S.chunk) : -1);
+            for (int64_t o : want_logits_neg) {
+                const int64_t pos = total + o;
+                if (pos < 0 || logits_rows.count(pos)) continue;
+                if (pos == total - 1) {  // the common case (-1); earlier ones aren't retained
+                    const float * row = llama_get_logits_ith(S.ctx, final_idx);
+                    logits_rows[pos].assign(row, row + S.n_vocab);
+                }
+            }
+        }
 
         // ------------- assemble binary response -------------
         const int64_t n_total = n_prompt + n_gen;
